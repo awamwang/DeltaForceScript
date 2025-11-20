@@ -9,6 +9,7 @@ import sys
 import re
 import time
 import ctypes
+from typing import Optional, Tuple
 
 from window_capture import *
 from region_selector import RegionSelector
@@ -79,6 +80,12 @@ def click_region_center(region: tuple, clicks=1, interval=0.1):
 def extract_and_merge_digits(s: str) -> str:
     """识别字符串中的所有数字并合并为一个新字符串"""
     return ''.join(re.findall(r'\d', s))
+
+
+MONEY_PLUS_PATTERN = re.compile(r'(\d+)\s*\+')
+UNLOCK_PATTERN = re.compile(r'(\d+)\s*分\s*(\d+)\s*秒.*后.*解锁')
+DIRECT_BUY_PATTERN = re.compile(r'剩余[:：]?\s*(\d+)\s*分\s*(\d+)\s*秒')
+COUNTDOWN_PATTERN = re.compile(r'(\d+)\s*分\s*(\d+)\s*秒')
     
 
 class ScriptThread(QThread):
@@ -100,11 +107,148 @@ class ScriptThread(QThread):
         self.is_paused = False
         self.output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
         os.makedirs(self.output_dir, exist_ok=True)
+        self.window_region_cache: Optional[Tuple[int, int, int, int]] = None
+        self.cached_money_region: Optional[Tuple[int, int, int, int]] = None
+        self.cached_timer_region: Optional[Tuple[int, int, int, int]] = None
     
     def frame_cut(self, frame, region):
         """裁剪图像区域"""
         left, top, right, bottom = region
         return frame[top:bottom, left:right]
+
+    def get_window_region(self) -> Optional[Tuple[int, int, int, int]]:
+        """获取窗口范围"""
+        if self.window_region_cache:
+            return self.window_region_cache
+
+        region = self.selector.get_region("window")
+        if region:
+            self.window_region_cache = region
+            return region
+
+        all_regions = getattr(self.selector, "get_all_regions", lambda: {})()
+        if all_regions:
+            coords = list(all_regions.values())
+            left = min(r[0] for r in coords)
+            top = min(r[1] for r in coords)
+            right = max(r[2] for r in coords)
+            bottom = max(r[3] for r in coords)
+            self.window_region_cache = (left, top, right, bottom)
+            return self.window_region_cache
+
+        frame = self.win_cap.capture()
+        if frame is not None and frame.size > 0:
+            h, w = frame.shape[:2]
+            self.window_region_cache = (0, 0, w, h)
+            return self.window_region_cache
+        return None
+
+    def fraction_region(self, region: Tuple[int, int, int, int],
+                        start_x_ratio: float, start_y_ratio: float,
+                        end_x_ratio: float, end_y_ratio: float) -> Tuple[int, int, int, int]:
+        """按比例获取子区域"""
+        left, top, right, bottom = region
+        width = max(1, right - left)
+        height = max(1, bottom - top)
+        sub_left = left + int(width * start_x_ratio)
+        sub_top = top + int(height * start_y_ratio)
+        sub_right = left + int(width * end_x_ratio)
+        sub_bottom = top + int(height * end_y_ratio)
+        if sub_right <= sub_left:
+            sub_right = min(right, sub_left + 2)
+        if sub_bottom <= sub_top:
+            sub_bottom = min(bottom, sub_top + 2)
+        return (sub_left, sub_top, sub_right, sub_bottom)
+
+    def _parse_money_text(self, text: str) -> str:
+        if not text:
+            return ""
+        match = MONEY_PLUS_PATTERN.search(text)
+        if match:
+            return match.group(1)
+        digits = extract_and_merge_digits(text)
+        return digits
+
+    def read_money_value(self) -> str:
+        """读取右上角金币数"""
+        window_region = self.get_window_region()
+        candidates = []
+        if self.cached_money_region:
+            candidates.append(("cache", self.cached_money_region))
+        if window_region:
+            region = self.fraction_region(window_region, 0.75, 0.0, 1.0, 0.25)
+            candidates.append(("dynamic", region))
+
+        for source, region in candidates:
+            money_text = self.ocr_region(region)
+            value = self._parse_money_text(money_text)
+            if value:
+                if source != "cache":
+                    self.cached_money_region = region
+                return value
+
+        fallback_region = self.selector.get_region("money")
+        if fallback_region:
+            money_text = self.ocr_region(fallback_region)
+            value = self._parse_money_text(money_text)
+            if value:
+                return value
+        return ""
+
+    def _parse_timer_text(self, text: str):
+        if not text:
+            return None
+        unlock_match = UNLOCK_PATTERN.search(text)
+        if unlock_match:
+            return {
+                'mode': 'unlock',
+                'minutes': int(unlock_match.group(1)),
+                'seconds': int(unlock_match.group(2)),
+                'text': text
+            }
+        direct_match = DIRECT_BUY_PATTERN.search(text)
+        if direct_match:
+            return {
+                'mode': 'direct',
+                'minutes': int(direct_match.group(1)),
+                'seconds': int(direct_match.group(2)),
+                'text': text
+            }
+        pattern_match = COUNTDOWN_PATTERN.search(text)
+        if pattern_match:
+            return {
+                'mode': 'countdown',
+                'minutes': int(pattern_match.group(1)),
+                'seconds': int(pattern_match.group(2)),
+                'text': text
+            }
+        return None
+
+    def read_timer_info(self):
+        """读取右下角倒计时信息"""
+        window_region = self.get_window_region()
+        candidates = []
+        if self.cached_timer_region:
+            candidates.append(("cache", self.cached_timer_region))
+        if window_region:
+            region = self.fraction_region(window_region, 0.75, 0.75, 1.0, 1.0)
+            candidates.append(("dynamic", region))
+
+        for source, region in candidates:
+            text = self.ocr_region(region)
+            info = self._parse_timer_text(text)
+            if info:
+                if source != "cache":
+                    self.cached_timer_region = region
+                return info
+
+        fallback_region = self.selector.get_region("time")
+        if fallback_region:
+            text = self.ocr_region(fallback_region)
+            info = self._parse_timer_text(text)
+            if info:
+                return info
+        return None
 
     def verify_window(self) -> bool:
         """检查确认按钮区域的颜色是否变化"""
@@ -160,16 +304,17 @@ class ScriptThread(QThread):
         try:
             self.status_updated.emit("初始化中...")
             
-            time_region = self.selector.get_region("time")
             buy_region = self.selector.get_region("buy")
             verify_region = self.selector.get_region("verify")
             refresh_region = self.selector.get_region("refresh")
-            money_region = self.selector.get_region("money")
+            window_region = self.get_window_region()
+            if not window_region:
+                raise RuntimeError("未找到窗口范围，请在区域配置中添加 window 区域或至少一个子区域。")
 
-            money = self.ocr_region(money_region)
-            money = extract_and_merge_digits(money)
+            money = self.read_money_value()
+            if not money:
+                money = "0"
             self.status_updated.emit(f"初始三角币: {money}")
-            pattern = re.compile(r'(\d+)\s*分\s*(\d+)\s*秒')
             
             self.status_updated.emit("监控中...")
             refreshed = False  # 标记是否刚刚点击过刷新
@@ -178,66 +323,64 @@ class ScriptThread(QThread):
                 # 暂停时等待
                 while self.is_paused: time.sleep(0.2); continue
                 # 截图并OCR识别时间
-                res = self.ocr_region(time_region)
-                if "天" in res or "小时" in res: click_region_center(refresh_region); continue
-                match = pattern.search(res)
-                if match:
-                    minutes = int(match.group(1))
-                    seconds = int(match.group(2))
-                    # 更新时间显示
-                    self.timer_updated.emit(str(minutes), str(seconds))
-                    # 剩余时间到 0:03 时点击刷新（如果启用）
-                    if minutes == 0 and seconds == 3 and self.config['click_refresh_at_3s'] and not refreshed:
-                        self.status_updated.emit("🔄 点击刷新...")
-                        click_region_center(refresh_region)
-                        refreshed = True
-                    # 剩余时间到 0:01 时执行点击
-                    if minutes == 0 and seconds == 1:
-                        self.status_updated.emit("准备点击...")
-                        time.sleep(self.config['buy_click_delay'])
-                        # 点击购买按钮
-                        click_region_center(buy_region, interval=0)
-                        # 校验点击是否成功（可能造成延迟）
-                        buy_count = 0
-                        while not self.verify_window() and buy_count < 5:
-                            buy_count += 1
-                            if buy_count <= 2:
-                                time.sleep(self.config['buy_interval'])
-                                click_region_center(buy_region, interval=0)
-                        time.sleep(self.config['buy_to_verify_delay'])
-                        # 点击确认按钮
-                        click_region_center(verify_region, interval=self.config['verify_interval'])
-                        self.status_updated.emit("点击确认按钮...")
-                        # 校验点到了确认
-                        verify_counter = 0
-                        while self.verify_window():
-                            verify_counter += 1
-                            if verify_counter > 2:
-                                pydirectinput.click(1, 1, interval=0.1)
-                            click_region_center(verify_region, interval=self.config['verify_interval'])
-                        
-                        self.status_updated.emit("等待刷新...")
-                        time.sleep(1.5)
-                        if self.verify_window(): pydirectinput.press('esc')
-                        click_region_center(refresh_region)
-                        # 检查三角币是否变化
-                        now_money = self.ocr_region(money_region)
-                        now_money = extract_and_merge_digits(now_money)
-                        self.status_updated.emit(f"当前三角币: {now_money}")
-                        self.config['continue_after_complete'] &= (now_money == money)
-                        # 根据配置决定是否继续
-                        if not self.config['continue_after_complete']:
-                            self.status_updated.emit("任务完成！")
-                            self.task_completed.emit()
-                            break
-                        else:
-                            refreshed = False
-                            self.status_updated.emit("继续监控中...")
-                    else:
-                        if minutes > 0 or seconds > 5:
-                            time.sleep(self.config['ocr_interval'])
-                else:
+                timer_info = self.read_timer_info()
+                if not timer_info:
                     time.sleep(self.config['ocr_interval'])
+                    continue
+
+                if timer_info['mode'] == 'direct':
+                    self.status_updated.emit("当前商品可直接购买，不需要脚本操作")
+                    self.task_completed.emit()
+                    break
+
+                minutes = timer_info['minutes']
+                seconds = timer_info['seconds']
+                self.timer_updated.emit(str(minutes), str(seconds))
+
+                if minutes == 0 and seconds == 3 and self.config['click_refresh_at_3s'] and not refreshed:
+                    self.status_updated.emit("🔄 点击刷新...")
+                    click_region_center(refresh_region)
+                    refreshed = True
+
+                if minutes == 0 and seconds == 1:
+                    self.status_updated.emit("准备点击...")
+                    time.sleep(self.config['buy_click_delay'])
+                    click_region_center(buy_region, interval=0)
+                    buy_count = 0
+                    while not self.verify_window() and buy_count < 5:
+                        buy_count += 1
+                        if buy_count <= 2:
+                            time.sleep(self.config['buy_interval'])
+                            click_region_center(buy_region, interval=0)
+                    time.sleep(self.config['buy_to_verify_delay'])
+                    click_region_center(verify_region, interval=self.config['verify_interval'])
+                    self.status_updated.emit("点击确认按钮...")
+                    verify_counter = 0
+                    while self.verify_window():
+                        verify_counter += 1
+                        if verify_counter > 2:
+                            pydirectinput.click(1, 1, interval=0.1)
+                        click_region_center(verify_region, interval=self.config['verify_interval'])
+                    
+                    self.status_updated.emit("等待刷新...")
+                    time.sleep(1.5)
+                    if self.verify_window(): pydirectinput.press('esc')
+                    click_region_center(refresh_region)
+                    now_money = self.read_money_value()
+                    if not now_money:
+                        now_money = "0"
+                    self.status_updated.emit(f"当前三角币: {now_money}")
+                    self.config['continue_after_complete'] &= (now_money == money)
+                    if not self.config['continue_after_complete']:
+                        self.status_updated.emit("任务完成！")
+                        self.task_completed.emit()
+                        break
+                    else:
+                        refreshed = False
+                        self.status_updated.emit("继续监控中...")
+                else:
+                    if minutes > 0 or seconds > 5:
+                        time.sleep(self.config['ocr_interval'])
         except Exception as e:
             self.status_updated.emit(f"错误: {str(e)}")
             print(f"脚本运行错误: {e}")
