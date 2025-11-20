@@ -136,15 +136,15 @@ class ScriptThread(QThread):
         # while frame is None or frame.size == 0: frame = self.win_cap.capture()
         if frame is None or frame.size == 0: return ""
         roi = self.frame_cut(frame, region)
-        file_path = os.path.join(self.output_dir, f"ocr_{int(time.time() * 1000)}.png")
-        if roi.size == 0:
-            print(f"ROI为空，无法保存: {file_path}")
-        else:
-            success, buffer = cv2.imencode(".png", roi)
-            if success:
-                buffer.tofile(file_path)
-            else:
-                print(f"图片编码失败: {file_path}")
+        # file_path = os.path.join(self.output_dir, f"ocr_{int(time.time() * 1000)}.png")
+        # if roi.size == 0:
+        #     print(f"ROI为空，无法保存: {file_path}")
+        # else:
+        #     success, buffer = cv2.imencode(".png", roi)
+        #     if success:
+        #         buffer.tofile(file_path)
+        #     else:
+        #         print(f"图片编码失败: {file_path}")
         rgb_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB) if roi.ndim == 3 else roi
         res = self.ocr.readtext(rgb_roi, detail=1)
         if not res:
@@ -255,12 +255,13 @@ def main():
     """主函数"""
     app = QApplication(sys.argv)
     selector = RegionSelector()
-    selector.load_regions_from_file("regions_2k.json")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    default_region_file = os.path.join(script_dir, "regions_2k.json")
     win_cap = WindowCapture(max_buffer_len=2)
     
     # 初始化 OCR
     ocr = easyocr.Reader(["ch_sim", "en"], gpu=True)
-    window = MonitorWindow()
+    window = MonitorWindow(default_region_file=default_region_file)
     window.show()
     # 移动到屏幕右下角
     screen = app.primaryScreen().geometry()
@@ -271,6 +272,18 @@ def main():
     window.add_log("程序已启动")
     window.add_log("点击 [开始] 按钮启动监控")
     script_thread = None
+
+    def load_region_file(filepath: str):
+        """加载区域配置文件"""
+        try:
+            selector.load_regions_from_file(filepath)
+            window.set_region_file(filepath)
+            window.add_log(f"区域配置已加载: {os.path.basename(filepath)}")
+        except Exception as exc:
+            window.add_log(f"⚠️ 区域配置加载失败: {exc}")
+    
+    load_region_file(default_region_file)
+    window.controller.region_file_changed.connect(load_region_file)
     
     def on_start():
         nonlocal script_thread

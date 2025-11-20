@@ -3,9 +3,11 @@
 # @Date: 2025-10-04
 # @Description: PyQt6 GUI 监控窗口
 
+import os
+
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QPushButton, QGroupBox, QTextEdit,
-                             QSpinBox, QDoubleSpinBox, QCheckBox)
+                             QSpinBox, QDoubleSpinBox, QCheckBox, QFileDialog)
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QFont
 
@@ -16,12 +18,13 @@ class ScriptController(QObject):
     stop_requested = pyqtSignal()
     pause_requested = pyqtSignal()
     resume_requested = pyqtSignal()
+    region_file_changed = pyqtSignal(str)
 
 
 class MonitorWindow(QMainWindow):
     """PyQt6 监控窗口"""
     
-    def __init__(self):
+    def __init__(self, default_region_file="regions_2k.json"):
         super().__init__()
         self.controller = ScriptController()
         
@@ -34,6 +37,7 @@ class MonitorWindow(QMainWindow):
         self.confidence = 0.0
         self.click_count = 0
         self.status = "就绪"
+        self.region_file_path = os.path.abspath(default_region_file)
         
         # 配置变量
         self.buy_click_delay = 0.50  # 购买点击延迟（秒）
@@ -145,6 +149,35 @@ class MonitorWindow(QMainWindow):
         """)
         config_layout = QVBoxLayout()
         config_group.setLayout(config_layout)
+        
+        # 区域配置文件选择
+        file_layout = QHBoxLayout()
+        file_label = QLabel("区域配置文件:")
+        file_label.setFont(QFont("微软雅黑", 10))
+        file_label.setFixedWidth(120)
+        self.region_file_display = QLabel()
+        self.region_file_display.setFont(QFont("微软雅黑", 9))
+        self.region_file_display.setStyleSheet("color: #3F51B5;")
+        self._update_region_file_display()
+        select_file_btn = QPushButton("选择文件")
+        select_file_btn.setFont(QFont("微软雅黑", 10))
+        select_file_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #607D8B;
+                color: white;
+                border: none;
+                padding: 6px 10px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #546E7A;
+            }
+        """)
+        select_file_btn.clicked.connect(self.on_select_region_file)
+        file_layout.addWidget(file_label)
+        file_layout.addWidget(self.region_file_display, stretch=1)
+        file_layout.addWidget(select_file_btn)
+        config_layout.addLayout(file_layout)
         
         # 购买点击延迟设置
         delay_layout = QHBoxLayout()
@@ -538,3 +571,32 @@ class MonitorWindow(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.update_status("✅ 任务完成！")
         self.add_log("✅ 任务已完成")
+
+    def get_region_file(self):
+        """获取当前区域配置路径"""
+        return self.region_file_path
+
+    def set_region_file(self, filepath: str):
+        """设置区域配置路径"""
+        self.region_file_path = os.path.abspath(filepath)
+        self._update_region_file_display()
+
+    def _update_region_file_display(self):
+        """更新区域配置显示"""
+        if hasattr(self, "region_file_display"):
+            display_name = os.path.basename(self.region_file_path)
+            self.region_file_display.setText(display_name)
+            self.region_file_display.setToolTip(self.region_file_path)
+
+    def on_select_region_file(self):
+        """选择区域配置文件"""
+        current_dir = os.path.dirname(self.region_file_path)
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择区域配置文件",
+            current_dir,
+            "JSON 文件 (*.json)"
+        )
+        if filepath:
+            self.add_log(f"正在加载区域配置: {filepath}")
+            self.controller.region_file_changed.emit(filepath)
