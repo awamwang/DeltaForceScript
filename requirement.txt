@@ -9,3 +9,5 @@ easyocr==1.7.1
 
 paddleocr==3.2.0
 paddlepaddle-gpu==3.2.0
+
+pyinstaller==6.16.0
