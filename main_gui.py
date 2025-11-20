@@ -9,11 +9,12 @@ import sys
 import re
 import time
 import ctypes
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 from window_capture import *
 from region_selector import RegionSelector
 from gui_monitor import MonitorWindow
+from auto_region_scanner import run_initial_pattern_scan
 
 import numpy
 import cv2
@@ -24,7 +25,7 @@ import pydirectinput
 from colormath.color_objects import sRGBColor, LabColor
 from colormath.color_diff import delta_e_cie2000
 from colormath.color_conversions import convert_color
-from window_manager import ensure_target_window
+from window_manager import ensure_target_window, get_target_window_rect
 
 def patch_asscalar(a):
     return a.item()
@@ -86,7 +87,8 @@ MONEY_PLUS_PATTERN = re.compile(r'(\d+)\s*\+')
 UNLOCK_PATTERN = re.compile(r'(\d+)\s*分\s*(\d+)\s*秒.*后.*解锁')
 DIRECT_BUY_PATTERN = re.compile(r'剩余[:：]?\s*(\d+)\s*分\s*(\d+)\s*秒')
 COUNTDOWN_PATTERN = re.compile(r'(\d+)\s*分\s*(\d+)\s*秒')
-    
+REQUIRED_LABELS = ["三角币数目", "倒数计时"]
+
 
 class ScriptThread(QThread):
     """脚本运行线程"""
@@ -97,19 +99,32 @@ class ScriptThread(QThread):
     click_performed = pyqtSignal()
     task_completed = pyqtSignal()
     
-    def __init__(self, selector: RegionSelector, win_cap: WindowCapture, ocr, config):
+    def __init__(self, selector: RegionSelector, win_cap: WindowCapture, ocr, config,
+                 detected_regions: Optional[Dict[str, Dict[str, object]]] = None, debug: bool = False):
         super().__init__()
         self.selector = selector
         self.win_cap = win_cap
         self.ocr = ocr
         self.config = config
+        self.debug = debug
         self.is_running = True
         self.is_paused = False
         self.output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
         os.makedirs(self.output_dir, exist_ok=True)
+        self.detected_regions = detected_regions or {}
         self.window_region_cache: Optional[Tuple[int, int, int, int]] = None
         self.cached_money_region: Optional[Tuple[int, int, int, int]] = None
         self.cached_timer_region: Optional[Tuple[int, int, int, int]] = None
+        money_info = self.detected_regions.get("三角币数目")
+        if money_info:
+            self.cached_money_region = tuple(money_info["bbox"])
+            if money_info.get("region_key"):
+                self.selector.regions.setdefault(money_info["region_key"], self.cached_money_region)
+        timer_info = self.detected_regions.get("倒数计时")
+        if timer_info:
+            self.cached_timer_region = tuple(timer_info["bbox"])
+            if timer_info.get("region_key"):
+                self.selector.regions.setdefault(timer_info["region_key"], self.cached_timer_region)
     
     def frame_cut(self, frame, region):
         """裁剪图像区域"""
@@ -125,6 +140,11 @@ class ScriptThread(QThread):
         if region:
             self.window_region_cache = region
             return region
+
+        os_window_region = get_target_window_rect()
+        if os_window_region:
+            self.window_region_cache = os_window_region
+            return os_window_region
 
         all_regions = getattr(self.selector, "get_all_regions", lambda: {})()
         if all_regions:
@@ -170,30 +190,12 @@ class ScriptThread(QThread):
         return digits
 
     def read_money_value(self) -> str:
-        """读取右上角金币数"""
-        window_region = self.get_window_region()
-        candidates = []
-        if self.cached_money_region:
-            candidates.append(("cache", self.cached_money_region))
-        if window_region:
-            region = self.fraction_region(window_region, 0.75, 0.0, 1.0, 0.25)
-            candidates.append(("dynamic", region))
-
-        for source, region in candidates:
-            money_text = self.ocr_region(region)
-            value = self._parse_money_text(money_text)
-            if value:
-                if source != "cache":
-                    self.cached_money_region = region
-                return value
-
-        fallback_region = self.selector.get_region("money")
-        if fallback_region:
-            money_text = self.ocr_region(fallback_region)
-            value = self._parse_money_text(money_text)
-            if value:
-                return value
-        return ""
+        """读取三角币数值"""
+        if not self.cached_money_region:
+            return ""
+        money_text = self.ocr_region(self.cached_money_region, context="三角币-cache")
+        value = self._parse_money_text(money_text)
+        return value
 
     def _parse_timer_text(self, text: str):
         if not text:
@@ -225,30 +227,12 @@ class ScriptThread(QThread):
         return None
 
     def read_timer_info(self):
-        """读取右下角倒计时信息"""
-        window_region = self.get_window_region()
-        candidates = []
-        if self.cached_timer_region:
-            candidates.append(("cache", self.cached_timer_region))
-        if window_region:
-            region = self.fraction_region(window_region, 0.75, 0.75, 1.0, 1.0)
-            candidates.append(("dynamic", region))
-
-        for source, region in candidates:
-            text = self.ocr_region(region)
-            info = self._parse_timer_text(text)
-            if info:
-                if source != "cache":
-                    self.cached_timer_region = region
-                return info
-
-        fallback_region = self.selector.get_region("time")
-        if fallback_region:
-            text = self.ocr_region(fallback_region)
-            info = self._parse_timer_text(text)
-            if info:
-                return info
-        return None
+        """读取倒计时信息"""
+        if not self.cached_timer_region:
+            return None
+        text = self.ocr_region(self.cached_timer_region, context="倒计时-cache")
+        info = self._parse_timer_text(text)
+        return info
 
     def verify_window(self) -> bool:
         """检查确认按钮区域的颜色是否变化"""
@@ -275,11 +259,16 @@ class ScriptThread(QThread):
             return True
         return False
 
-    def ocr_region(self, region):
+    def ocr_region(self, region, context: str = ""):
         """OCR 识别"""
         frame = self.win_cap.capture()
         # while frame is None or frame.size == 0: frame = self.win_cap.capture()
-        if frame is None or frame.size == 0: return ""
+        if frame is None or frame.size == 0:
+            if self.debug:
+                msg = f"[DEBUG] OCR未获取到帧 (context={context})"
+                self.status_updated.emit(msg)
+                print(msg)
+            return ""
         roi = self.frame_cut(frame, region)
         # file_path = os.path.join(self.output_dir, f"ocr_{int(time.time() * 1000)}.png")
         # if roi.size == 0:
@@ -293,10 +282,23 @@ class ScriptThread(QThread):
         rgb_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB) if roi.ndim == 3 else roi
         res = self.ocr.readtext(rgb_roi, detail=1)
         if not res:
+            if self.debug:
+                debug_msg = f"[DEBUG] OCR无识别结果 context={context} 区域={region}"
+                self.status_updated.emit(debug_msg)
+                print(debug_msg)
             return ""
         texts = [item[1] for item in res if len(item) >= 2]
         if not texts:
+            if self.debug:
+                debug_msg = f"[DEBUG] OCR识别文本为空 context={context} 区域={region}"
+                self.status_updated.emit(debug_msg)
+                print(debug_msg)
             return ""
+        if self.debug:
+            joined = " | ".join(texts)
+            debug_msg = f"[DEBUG] OCR候选 context={context} 区域={region}: {joined}"
+            self.status_updated.emit(debug_msg)
+            print(debug_msg)
         return ''.join(texts)
 
     def run(self):
@@ -402,6 +404,7 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     default_region_file = os.path.join(script_dir, "regions_config.json")
     win_cap = WindowCapture(max_buffer_len=2)
+    outputs_dir = os.path.join(script_dir, "outputs")
     
     # 初始化 OCR
     ocr = easyocr.Reader(["ch_sim", "en"], gpu=True)
@@ -416,6 +419,7 @@ def main():
     window.add_log("程序已启动")
     window.add_log("点击 [开始] 按钮启动监控")
     script_thread = None
+    detected_regions_cache: Dict[str, Dict[str, object]] = {}
 
     def load_region_file(filepath: str):
         """加载区域配置文件"""
@@ -430,7 +434,8 @@ def main():
     window.controller.region_file_changed.connect(load_region_file)
     
     def on_start():
-        nonlocal script_thread
+        nonlocal script_thread, detected_regions_cache
+        window.start_btn.setEnabled(False)
         window.add_log("正在检查目标窗口...")
         result = ensure_target_window()
         if not result.exists:
@@ -446,15 +451,51 @@ def main():
             window.add_log(result.message)
             if result.hwnd and "未能" in result.message:
                 QMessageBox.information(window, "提示", result.message)
+        window_region = selector.get_region("window")
+        if not window_region:
+            os_window_region = get_target_window_rect()
+            if os_window_region:
+                window_region = os_window_region
+        config = window.get_config()
+        debug_mode = config.get('debug', False)
+        required_met = False
+        for attempt in range(1, 4):
+            window.add_log(f"正在执行自动区域扫描 (尝试 {attempt}/3)...")
+            detected_regions_cache, _ = run_initial_pattern_scan(win_cap, ocr, outputs_dir, window_region, debug=debug_mode)
+            if detected_regions_cache:
+                for label, info in detected_regions_cache.items():
+                    bbox = tuple(info["bbox"])
+                    region_key = info.get("region_key")
+                    if region_key:
+                        selector.regions.setdefault(region_key, bbox)
+                    window.add_log(f"{label}: {bbox} 文本='{info['text']}'")
+            else:
+                window.add_log("未检测到预设文字区域")
+            required_met = all(label in detected_regions_cache for label in REQUIRED_LABELS)
+            if required_met:
+                break
+            time.sleep(0.3)
+        if not required_met:
+            message = "无法解析关键区域，请确认窗口内容后重试。"
+            window.add_log(message)
+            window.update_status(message)
+            QMessageBox.warning(window, "提示", message)
+            window.is_running = False
+            window.start_btn.setEnabled(True)
+            window.pause_btn.setEnabled(False)
+            window.stop_btn.setEnabled(False)
+            return
         window.add_log("正在启动监控线程...")
         
         # 获取当前配置
-        config = window.get_config()
         window.add_log(f"配置: 购买延迟={config['buy_click_delay']}秒")
         
-        script_thread = ScriptThread(selector, win_cap, ocr, config)
+        script_thread = ScriptThread(selector, win_cap, ocr, config, detected_regions=detected_regions_cache, debug=debug_mode)
         
-        script_thread.status_updated.connect(lambda s: window.update_status(s))
+        def handle_status_message(message: str):
+            if not message.startswith("[DEBUG]"):
+                window.update_status(message)
+        script_thread.status_updated.connect(handle_status_message)
         script_thread.status_updated.connect(lambda s: window.add_log(s))
         script_thread.timer_updated.connect(lambda m, s: window.update_timer(m, s))
         script_thread.task_completed.connect(lambda: window.on_complete())

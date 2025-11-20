@@ -161,3 +161,14 @@ def ensure_target_window() -> TargetWindowResult:
         message="已找到目标窗口，但未能自动置前，请手动切换到“三角洲行动”。",
     )
 
+
+def get_target_window_rect() -> Optional[Tuple[int, int, int, int]]:
+    """获取目标窗口的像素范围"""
+    hwnd = _find_window()
+    if not hwnd:
+        return None
+    try:
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+        return (left, top, right, bottom)
+    except win32gui.error:
+        return None

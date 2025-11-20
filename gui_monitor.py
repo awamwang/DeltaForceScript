@@ -47,6 +47,7 @@ class MonitorWindow(QMainWindow):
         self.ocr_interval = 0.95  # OCR识别间隔（time >= 5）（秒）
         self.continue_after_complete = True  # 任务完成后继续运行
         self.click_refresh_at_3s = True  # 3秒时点击刷新按钮
+        self.debug_mode = False  # 调试模式开关
         
         self.init_ui()
         
@@ -306,6 +307,24 @@ class MonitorWindow(QMainWindow):
         refresh_layout.addWidget(self.refresh_checkbox)
         refresh_layout.addStretch()
         config_layout.addLayout(refresh_layout)
+
+        debug_layout = QHBoxLayout()
+        self.debug_checkbox = QCheckBox("调试模式")
+        self.debug_checkbox.setFont(QFont("微软雅黑", 10))
+        self.debug_checkbox.setChecked(self.debug_mode)
+        self.debug_checkbox.stateChanged.connect(self.on_debug_changed)
+        self.debug_checkbox.setStyleSheet("""
+            QCheckBox {
+                padding: 5px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+        """)
+        debug_layout.addWidget(self.debug_checkbox)
+        debug_layout.addStretch()
+        config_layout.addLayout(debug_layout)
         
         main_layout.addWidget(config_group)
         
@@ -496,6 +515,12 @@ class MonitorWindow(QMainWindow):
         self.click_refresh_at_3s = (state == 2)  # Qt.CheckState.Checked = 2
         status = "启用" if self.click_refresh_at_3s else "禁用"
         self.add_log(f"⚙️ 3秒时点击刷新: {status}")
+
+    def on_debug_changed(self, state):
+        """调试模式变更"""
+        self.debug_mode = (state == 2)
+        status = "启用" if self.debug_mode else "禁用"
+        self.add_log(f"⚙️ 调试模式: {status}")
     
     def get_config(self):
         """获取当前配置"""
@@ -506,7 +531,8 @@ class MonitorWindow(QMainWindow):
             'verify_interval': self.verify_interval,
             'ocr_interval': self.ocr_interval,
             'continue_after_complete': self.continue_after_complete,
-            'click_refresh_at_3s': self.click_refresh_at_3s
+            'click_refresh_at_3s': self.click_refresh_at_3s,
+            'debug': self.debug_mode
         }
     
     def increment_clicks(self):
