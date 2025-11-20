@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: 当前文件",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "subProcess": true,
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe"
+        },
+        {
+            "name": "Python: main_gui.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main_gui.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "subProcess": true,
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe"
+        }
+    ]
+}
+
+
+
+

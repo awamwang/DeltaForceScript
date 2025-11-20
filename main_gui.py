@@ -15,7 +15,8 @@ from region_selector import RegionSelector
 from gui_monitor import MonitorWindow
 
 import numpy
-from paddleocr import PaddleOCR
+import cv2
+import easyocr
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QThread, pyqtSignal
 import pydirectinput
@@ -96,6 +97,8 @@ class ScriptThread(QThread):
         self.config = config
         self.is_running = True
         self.is_paused = False
+        self.output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+        os.makedirs(self.output_dir, exist_ok=True)
     
     def frame_cut(self, frame, region):
         """裁剪图像区域"""
@@ -133,10 +136,23 @@ class ScriptThread(QThread):
         # while frame is None or frame.size == 0: frame = self.win_cap.capture()
         if frame is None or frame.size == 0: return ""
         roi = self.frame_cut(frame, region)
-        res = self.ocr.ocr(roi)
-        if not res or not res[0]['rec_texts']:
+        file_path = os.path.join(self.output_dir, f"ocr_{int(time.time() * 1000)}.png")
+        if roi.size == 0:
+            print(f"ROI为空，无法保存: {file_path}")
+        else:
+            success, buffer = cv2.imencode(".png", roi)
+            if success:
+                buffer.tofile(file_path)
+            else:
+                print(f"图片编码失败: {file_path}")
+        rgb_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB) if roi.ndim == 3 else roi
+        res = self.ocr.readtext(rgb_roi, detail=1)
+        if not res:
             return ""
-        return res[0]['rec_texts'][0]
+        texts = [item[1] for item in res if len(item) >= 2]
+        if not texts:
+            return ""
+        return ''.join(texts)
 
     def run(self):
         """运行脚本"""
@@ -243,15 +259,7 @@ def main():
     win_cap = WindowCapture(max_buffer_len=2)
     
     # 初始化 OCR
-    ocr = PaddleOCR(
-        use_doc_orientation_classify=False,
-        use_doc_unwarping=False,
-        use_textline_orientation=False,
-        text_detection_model_dir="models/PP-OCRv5_server_det_infer",
-        text_recognition_model_dir="models/PP-OCRv5_server_rec_infer",
-        # use_tensorrt=True,
-        device='gpu:0'
-    )
+    ocr = easyocr.Reader(["ch_sim", "en"], gpu=True)
     window = MonitorWindow()
     window.show()
     # 移动到屏幕右下角
