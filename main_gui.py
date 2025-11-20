@@ -17,12 +17,13 @@ from gui_monitor import MonitorWindow
 import numpy
 import cv2
 import easyocr
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import QThread, pyqtSignal
 import pydirectinput
 from colormath.color_objects import sRGBColor, LabColor
 from colormath.color_diff import delta_e_cie2000
 from colormath.color_conversions import convert_color
+from window_manager import ensure_target_window
 
 def patch_asscalar(a):
     return a.item()
@@ -256,7 +257,7 @@ def main():
     app = QApplication(sys.argv)
     selector = RegionSelector()
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_region_file = os.path.join(script_dir, "regions_2k.json")
+    default_region_file = os.path.join(script_dir, "regions_config.json")
     win_cap = WindowCapture(max_buffer_len=2)
     
     # 初始化 OCR
@@ -287,6 +288,21 @@ def main():
     
     def on_start():
         nonlocal script_thread
+        window.add_log("正在检查目标窗口...")
+        result = ensure_target_window()
+        if not result.exists:
+            window.add_log(result.message)
+            window.update_status("⚠️ 目标窗口未找到")
+            QMessageBox.warning(window, "提示", result.message)
+            window.is_running = False
+            window.start_btn.setEnabled(True)
+            window.pause_btn.setEnabled(False)
+            window.stop_btn.setEnabled(False)
+            return
+        else:
+            window.add_log(result.message)
+            if result.hwnd and "未能" in result.message:
+                QMessageBox.information(window, "提示", result.message)
         window.add_log("正在启动监控线程...")
         
         # 获取当前配置
