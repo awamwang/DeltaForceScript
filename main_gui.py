@@ -325,9 +325,13 @@ class ScriptThread(QThread):
             self.status_updated.emit("初始化中...")
             
             # 优先使用自动检测的区域，否则从配置文件获取
-            buy_region = self.cached_buy_region or self.selector.get_region("buy") or self.selector.get_region("buy_button")
-            verify_region = self.cached_verify_region or self.selector.get_region("verify") or self.selector.get_region("verify_check")
-            refresh_region = self.cached_refresh_region or self.selector.get_region("refresh")
+            buy_region = self.cached_buy_region
+            verify_region = self.cached_verify_region
+            refresh_region = self.cached_refresh_region
+            
+            # buy_region = self.cached_buy_region or self.selector.get_region("buy") or self.selector.get_region("buy_button")
+            # verify_region = self.cached_verify_region or self.selector.get_region("verify") or self.selector.get_region("verify_check")
+            # refresh_region = self.cached_refresh_region or self.selector.get_region("refresh")
             window_region = self.get_window_region()
             if not window_region:
                 raise RuntimeError("未找到窗口范围，请在区域配置中添加 window 区域或至少一个子区域。")
@@ -383,15 +387,18 @@ class ScriptThread(QThread):
                     click_region_center(verify_region, interval=self.config['verify_interval'])
                     self.status_updated.emit("点击确认按钮...")
                     verify_counter = 0
-                    while self.verify_window():
-                        verify_counter += 1
-                        if verify_counter > 2:
-                            pydirectinput.click(1, 1, interval=0.1)
-                        click_region_center(verify_region, interval=self.config['verify_interval'])
+                    # while self.verify_window():
+                    #     verify_counter += 1
+                    #     if verify_counter > 2:
+                    #         pydirectinput.click(1, 1, interval=0.1)
+                    #     click_region_center(verify_region, interval=self.config['verify_interval'])
+                    click_region_center(verify_region, interval=self.config['verify_interval'])
                     
                     self.status_updated.emit("等待刷新...")
                     time.sleep(1.5)
                     if self.verify_window(): pydirectinput.press('esc')
+                    time.sleep(1)
+                    if self.verify_window(): pydirectinput.press('blspc')
                     click_region_center(refresh_region)
                     now_money = self.read_money_value()
                     if not now_money:

@@ -22,6 +22,7 @@ class PatternDefinition:
     patterns: Optional[List[re.Pattern]] = None
     region_percent: Optional[Tuple[float, float, float, float]] = None
     image_match: Optional[str] = None
+    offset: Optional[Tuple[int, int, int, int]] = None
 
 
 PREDEFINED_PATTERNS: List[PatternDefinition] = [
@@ -38,6 +39,7 @@ PREDEFINED_PATTERNS: List[PatternDefinition] = [
         label="倒数计时",
         region_key="time",
         area_ratio=(0.75, 0.75, 1.0, 1.0),
+        offset=(-30, 0, 30, 0),
         patterns=[
             re.compile(r'(\d+小时)?(\d+分)?(\d+秒.*后解锁购买)'),
             re.compile(r'(\d+小时)?(\d+分)?(\d+秒)')
@@ -46,7 +48,7 @@ PREDEFINED_PATTERNS: List[PatternDefinition] = [
     PatternDefinition(
         label="成色筛选",
         region_key="quality_filter",
-        area_ratio=None,
+        area_ratio=(0, 0, 0.5, 0.5),
         patterns=[
             re.compile(r'所有成色'),
             re.compile(r'全部成色')
@@ -55,7 +57,7 @@ PREDEFINED_PATTERNS: List[PatternDefinition] = [
     PatternDefinition(
         label="公示期筛选",
         region_key="public_period_filter",
-        area_ratio=None,
+        area_ratio=(0, 0, 1.0, 0.5),
         patterns=[
             re.compile(r'不限公示期'),
             re.compile(r'全部公示期')
@@ -64,7 +66,7 @@ PREDEFINED_PATTERNS: List[PatternDefinition] = [
     PatternDefinition(
         label="排序修改",
         region_key="sort_modifier",
-        area_ratio=None,
+        area_ratio=(0, 0, 1.0, 0.5),
         patterns=[
             re.compile(r'默认排序'),
             re.compile(r'综合排序')
@@ -73,7 +75,7 @@ PREDEFINED_PATTERNS: List[PatternDefinition] = [
     PatternDefinition(
         label="目标描述",
         region_key="target_desc",
-        area_ratio=None,
+        area_ratio=(0.5, 0, 1, 0.5),
         patterns=[
             re.compile(r'.+的.+典藏外观'),
             re.compile(r'典藏外观')
@@ -82,7 +84,7 @@ PREDEFINED_PATTERNS: List[PatternDefinition] = [
     PatternDefinition(
         label="购买按钮",
         region_key="buy_button",
-        area_ratio=None,
+        area_ratio=(0.75, 0.75, 1.0, 1.0),
         patterns=[
             re.compile(r'公示中'),
         ],
@@ -336,6 +338,15 @@ def scan_predefined_regions(frame, ocr, output_dir, window_region: Optional[Tupl
         region_limit = None
         if definition.area_ratio:
             region_limit = _rect_from_ratio(scan_frame.shape, definition.area_ratio)
+            if definition.offset:
+                left_offset, top_offset, right_offset, bottom_offset = definition.offset
+                left, top, right, bottom = region_limit
+                region_limit = (
+                    left + left_offset,
+                    top + top_offset,
+                    right + right_offset,
+                    bottom + bottom_offset
+                )
         for entry in entries:
             if region_limit and not _bbox_in_rect(entry["bbox"], region_limit):
                 continue
