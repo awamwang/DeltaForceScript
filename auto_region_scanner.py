@@ -17,7 +17,8 @@ class PatternDefinition:
     label: str
     region_key: str
     area_ratio: Optional[Tuple[float, float, float, float]]
-    patterns: List[re.Pattern]
+    patterns: Optional[List[re.Pattern]] = None
+    region_percent: Optional[Tuple[float, float, float, float]] = None
 
 
 PREDEFINED_PATTERNS: List[PatternDefinition] = [
@@ -74,6 +75,20 @@ PREDEFINED_PATTERNS: List[PatternDefinition] = [
             re.compile(r'.+的.+典藏外观'),
             re.compile(r'典藏外观')
         ],
+    ),
+    PatternDefinition(
+        label="购买按钮",
+        region_key="buy_button",
+        area_ratio=None,
+        patterns=[
+            re.compile(r'公示中'),
+        ],
+    ),
+    PatternDefinition(
+        label="确认按钮",
+        region_key="verify_check",
+        area_ratio=None,
+        region_percent=(55.72, 61.81, 71.27, 66.61),
     ),
 ]
 
@@ -195,6 +210,32 @@ def scan_predefined_regions(frame, ocr, output_dir, window_region: Optional[Tupl
     if debug:
         print(f"[DEBUG] OCR结果数量: {len(entries)}")
     for definition in PREDEFINED_PATTERNS:
+        # 处理 region_percent 百分比坐标的情况
+        if definition.region_percent:
+            # 根据窗口实际大小转换为像素坐标
+            h, w = scan_frame.shape[:2]
+            left_pct, top_pct, right_pct, bottom_pct = definition.region_percent
+            abs_bbox = (
+                int(w * left_pct / 100) + actual_region[0],
+                int(h * top_pct / 100) + actual_region[1],
+                int(w * right_pct / 100) + actual_region[0],
+                int(h * bottom_pct / 100) + actual_region[1],
+            )
+            image_path = save_region_image_async(frame, abs_bbox, output_dir, definition.label, actual_region)
+            info = {
+                "bbox": abs_bbox,
+                "text": "",
+                "pattern": "",
+                "region_key": definition.region_key,
+                "image_path": image_path,
+            }
+            detected[definition.label] = info
+            print(f"[自动区域] {definition.label}: {abs_bbox} (百分比坐标转换)")
+            continue
+        
+        # 处理 OCR 模式匹配的情况
+        if not definition.patterns:
+            continue
         region_limit = None
         if definition.area_ratio:
             region_limit = _rect_from_ratio(scan_frame.shape, definition.area_ratio)

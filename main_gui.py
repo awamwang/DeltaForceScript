@@ -115,6 +115,8 @@ class ScriptThread(QThread):
         self.window_region_cache: Optional[Tuple[int, int, int, int]] = None
         self.cached_money_region: Optional[Tuple[int, int, int, int]] = None
         self.cached_timer_region: Optional[Tuple[int, int, int, int]] = None
+        self.cached_buy_region: Optional[Tuple[int, int, int, int]] = None
+        self.cached_verify_region: Optional[Tuple[int, int, int, int]] = None
         money_info = self.detected_regions.get("三角币数目")
         if money_info:
             self.cached_money_region = tuple(money_info["bbox"])
@@ -125,6 +127,16 @@ class ScriptThread(QThread):
             self.cached_timer_region = tuple(timer_info["bbox"])
             if timer_info.get("region_key"):
                 self.selector.regions.setdefault(timer_info["region_key"], self.cached_timer_region)
+        buy_info = self.detected_regions.get("购买按钮")
+        if buy_info:
+            self.cached_buy_region = tuple(buy_info["bbox"])
+            if buy_info.get("region_key"):
+                self.selector.regions.setdefault(buy_info["region_key"], self.cached_buy_region)
+        verify_info = self.detected_regions.get("确认按钮")
+        if verify_info:
+            self.cached_verify_region = tuple(verify_info["bbox"])
+            if verify_info.get("region_key"):
+                self.selector.regions.setdefault(verify_info["region_key"], self.cached_verify_region)
     
     def frame_cut(self, frame, region):
         """裁剪图像区域"""
@@ -306,12 +318,17 @@ class ScriptThread(QThread):
         try:
             self.status_updated.emit("初始化中...")
             
-            buy_region = self.selector.get_region("buy")
-            verify_region = self.selector.get_region("verify")
+            # 优先使用自动检测的区域，否则从配置文件获取
+            buy_region = self.cached_buy_region or self.selector.get_region("buy") or self.selector.get_region("buy_button")
+            verify_region = self.cached_verify_region or self.selector.get_region("verify") or self.selector.get_region("verify_check")
             refresh_region = self.selector.get_region("refresh")
             window_region = self.get_window_region()
             if not window_region:
                 raise RuntimeError("未找到窗口范围，请在区域配置中添加 window 区域或至少一个子区域。")
+            if not buy_region:
+                raise RuntimeError("未找到购买按钮区域，请确认自动扫描已检测到购买按钮或配置文件中包含 buy 区域。")
+            if not verify_region:
+                raise RuntimeError("未找到确认按钮区域，请确认自动扫描已检测到确认按钮或配置文件中包含 verify 区域。")
 
             money = self.read_money_value()
             if not money:
@@ -501,6 +518,9 @@ def main():
         script_thread.task_completed.connect(lambda: window.on_complete())
         
         script_thread.start()
+        # 脚本线程启动后，启用暂停和停止按钮
+        window.pause_btn.setEnabled(True)
+        window.stop_btn.setEnabled(True)
     
     def on_pause():
         if script_thread:

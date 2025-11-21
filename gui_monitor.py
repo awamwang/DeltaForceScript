@@ -551,13 +551,17 @@ class MonitorWindow(QMainWindow):
     
     def on_start_clicked(self):
         """开始按钮点击"""
+        # 如果按钮已经禁用，不响应点击
+        if not self.start_btn.isEnabled():
+            return
+        
         self.is_running = True
         self.is_paused = False
+        # 立即禁用开始按钮并更新状态
         self.start_btn.setEnabled(False)
-        self.pause_btn.setEnabled(True)
-        self.stop_btn.setEnabled(True)
-        self.update_status("运行中...")
+        self.update_status("获取数据中...")
         self.add_log("▶ 脚本已启动")
+        # 发出启动信号
         self.controller.start_requested.emit()
     
     def on_pause_clicked(self):
