@@ -117,6 +117,7 @@ class ScriptThread(QThread):
         self.cached_timer_region: Optional[Tuple[int, int, int, int]] = None
         self.cached_buy_region: Optional[Tuple[int, int, int, int]] = None
         self.cached_verify_region: Optional[Tuple[int, int, int, int]] = None
+        self.cached_refresh_region: Optional[Tuple[int, int, int, int]] = None
         money_info = self.detected_regions.get("三角币数目")
         if money_info:
             self.cached_money_region = tuple(money_info["bbox"])
@@ -137,6 +138,11 @@ class ScriptThread(QThread):
             self.cached_verify_region = tuple(verify_info["bbox"])
             if verify_info.get("region_key"):
                 self.selector.regions.setdefault(verify_info["region_key"], self.cached_verify_region)
+        refresh_info = self.detected_regions.get("刷新按钮")
+        if refresh_info:
+            self.cached_refresh_region = tuple(refresh_info["bbox"])
+            if refresh_info.get("region_key"):
+                self.selector.regions.setdefault(refresh_info["region_key"], self.cached_refresh_region)
     
     def frame_cut(self, frame, region):
         """裁剪图像区域"""
@@ -321,7 +327,7 @@ class ScriptThread(QThread):
             # 优先使用自动检测的区域，否则从配置文件获取
             buy_region = self.cached_buy_region or self.selector.get_region("buy") or self.selector.get_region("buy_button")
             verify_region = self.cached_verify_region or self.selector.get_region("verify") or self.selector.get_region("verify_check")
-            refresh_region = self.selector.get_region("refresh")
+            refresh_region = self.cached_refresh_region or self.selector.get_region("refresh")
             window_region = self.get_window_region()
             if not window_region:
                 raise RuntimeError("未找到窗口范围，请在区域配置中添加 window 区域或至少一个子区域。")
@@ -329,6 +335,8 @@ class ScriptThread(QThread):
                 raise RuntimeError("未找到购买按钮区域，请确认自动扫描已检测到购买按钮或配置文件中包含 buy 区域。")
             if not verify_region:
                 raise RuntimeError("未找到确认按钮区域，请确认自动扫描已检测到确认按钮或配置文件中包含 verify 区域。")
+            if not refresh_region:
+                raise RuntimeError("未找到刷新按钮区域，请确认自动扫描已检测到刷新按钮或配置文件中包含 refresh 区域。")
 
             money = self.read_money_value()
             if not money:
@@ -478,7 +486,7 @@ def main():
         required_met = False
         for attempt in range(1, 4):
             window.add_log(f"正在执行自动区域扫描 (尝试 {attempt}/3)...")
-            detected_regions_cache, _ = run_initial_pattern_scan(win_cap, ocr, outputs_dir, window_region, debug=debug_mode)
+            detected_regions_cache, _ = run_initial_pattern_scan(win_cap, ocr, outputs_dir, window_region, debug=debug_mode, script_dir=script_dir)
             if detected_regions_cache:
                 for label, info in detected_regions_cache.items():
                     bbox = tuple(info["bbox"])

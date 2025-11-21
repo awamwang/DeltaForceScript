@@ -7,8 +7,10 @@ import time
 import threading
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict, List
+from pathlib import Path
 
 import cv2
+import numpy as np
 
 
 @dataclass
@@ -19,6 +21,7 @@ class PatternDefinition:
     area_ratio: Optional[Tuple[float, float, float, float]]
     patterns: Optional[List[re.Pattern]] = None
     region_percent: Optional[Tuple[float, float, float, float]] = None
+    image_match: Optional[str] = None
 
 
 PREDEFINED_PATTERNS: List[PatternDefinition] = [
@@ -89,6 +92,12 @@ PREDEFINED_PATTERNS: List[PatternDefinition] = [
         region_key="verify_check",
         area_ratio=None,
         region_percent=(55.72, 61.81, 71.27, 66.61),
+    ),
+    PatternDefinition(
+        label="刷新按钮",
+        region_key="refresh",
+        area_ratio=None,
+        image_match="assets\\image\\refresh.png",
     ),
 ]
 
@@ -180,14 +189,97 @@ def save_region_image_async(frame, bbox, output_dir, label, window_region: Optio
     return path
 
 
+def load_template(template_path: str, script_dir: Optional[str] = None):
+    """加载模板并拆分 Alpha，支持中文路径"""
+    if script_dir:
+        template_path = os.path.join(script_dir, template_path)
+    if not os.path.isabs(template_path):
+        script_dir = script_dir or os.path.dirname(os.path.abspath(__file__))
+        template_path = os.path.join(script_dir, template_path)
+    img_bytes = np.fromfile(template_path, dtype=np.uint8)
+    image = cv2.imdecode(img_bytes, cv2.IMREAD_UNCHANGED)
+    if image is None:
+        raise FileNotFoundError(f"无法读取模板: {template_path}")
+    alpha = None
+    if len(image.shape) == 3 and image.shape[2] == 4:
+        alpha = image[:, :, 3]
+        image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+    return image, alpha
+
+
+def locate_template(source: np.ndarray, template: np.ndarray, scale_min=0.6, scale_max=1.6, steps=11, threshold=0.78):
+    """多尺度模板匹配，返回最优结果"""
+    source_gray = cv2.cvtColor(source, cv2.COLOR_BGR2GRAY)
+    scales = np.linspace(scale_min, scale_max, steps)
+    best_match = None
+
+    for scale in scales:
+        resized_template = cv2.resize(
+            template,
+            (max(1, int(template.shape[1] * scale)), max(1, int(template.shape[0] * scale))),
+            interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC,
+        )
+        if resized_template.shape[0] > source_gray.shape[0] or resized_template.shape[1] > source_gray.shape[1]:
+            continue
+        template_gray = cv2.cvtColor(resized_template, cv2.COLOR_BGR2GRAY) if len(resized_template.shape) == 3 else resized_template
+        result = cv2.matchTemplate(source_gray, template_gray, cv2.TM_CCOEFF_NORMED)
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+        if best_match is None or max_val > best_match["score"]:
+            top_left = max_loc
+            h, w = template_gray.shape
+            best_match = {
+                "score": float(max_val),
+                "scale": scale,
+                "top_left": top_left,
+                "bottom_right": (top_left[0] + w, top_left[1] + h),
+            }
+
+    if best_match and best_match["score"] >= threshold:
+        return best_match
+    return None
+
+
 def scan_predefined_regions(frame, ocr, output_dir, window_region: Optional[Tuple[int, int, int, int]] = None,
-                            debug: bool = False):
+                            debug: bool = False, script_dir: Optional[str] = None):
     """扫描预设文字区域"""
     detected: Dict[str, Dict[str, object]] = {}
     scan_frame, actual_region = _prepare_scan_frame(frame, window_region)
     if scan_frame is None or scan_frame.size == 0:
         print("自动扫描失败：未获取到窗口截图")
         return detected
+    
+    # 先处理图像匹配的情况（不需要OCR）
+    for definition in PREDEFINED_PATTERNS:
+        if definition.image_match:
+            try:
+                template, _ = load_template(definition.image_match, script_dir)
+                match = locate_template(scan_frame, template)
+                if match:
+                    abs_bbox = (
+                        match["top_left"][0] + actual_region[0],
+                        match["top_left"][1] + actual_region[1],
+                        match["bottom_right"][0] + actual_region[0],
+                        match["bottom_right"][1] + actual_region[1],
+                    )
+                    image_path = save_region_image_async(frame, abs_bbox, output_dir, definition.label, actual_region)
+                    info = {
+                        "bbox": abs_bbox,
+                        "text": "",
+                        "pattern": "",
+                        "region_key": definition.region_key,
+                        "image_path": image_path,
+                        "match_score": match["score"],
+                        "match_scale": match["scale"],
+                    }
+                    detected[definition.label] = info
+                    print(f"[自动区域] {definition.label}: {abs_bbox} 图像匹配 置信度={match['score']:.3f} 缩放={match['scale']:.2f}")
+                elif debug:
+                    print(f"[DEBUG] 图像匹配失败: {definition.label} (模板={definition.image_match})")
+            except Exception as exc:
+                if debug:
+                    print(f"[DEBUG] 图像匹配异常: {definition.label} - {exc}")
+    
+    # 处理需要OCR的情况
     rgb_frame = cv2.cvtColor(scan_frame, cv2.COLOR_BGR2RGB)
     try:
         ocr_results = ocr.readtext(rgb_frame, detail=1)
@@ -209,7 +301,12 @@ def scan_predefined_regions(frame, ocr, output_dir, window_region: Optional[Tupl
             print(f"[DEBUG][OCR] 文本='{entry['text']}' 区域={entry['bbox']}")
     if debug:
         print(f"[DEBUG] OCR结果数量: {len(entries)}")
+    
     for definition in PREDEFINED_PATTERNS:
+        # 跳过已处理的图像匹配和region_percent
+        if definition.image_match or definition.label in detected:
+            continue
+        
         # 处理 region_percent 百分比坐标的情况
         if definition.region_percent:
             # 根据窗口实际大小转换为像素坐标
@@ -267,7 +364,7 @@ def scan_predefined_regions(frame, ocr, output_dir, window_region: Optional[Tupl
 
 
 def run_initial_pattern_scan(win_cap, ocr, output_dir, window_region: Optional[Tuple[int, int, int, int]] = None,
-                             debug: bool = False):
+                             debug: bool = False, script_dir: Optional[str] = None):
     """获取窗口截图并执行自动扫描"""
     attempts = 0
     frame = win_cap.capture()
@@ -278,6 +375,6 @@ def run_initial_pattern_scan(win_cap, ocr, output_dir, window_region: Optional[T
     if frame is None or frame.size == 0:
         print("自动扫描失败：无法截取窗口")
         return {}, None
-    detected = scan_predefined_regions(frame, ocr, output_dir, window_region, debug=debug)
+    detected = scan_predefined_regions(frame, ocr, output_dir, window_region, debug=debug, script_dir=script_dir)
     return detected, frame
 
