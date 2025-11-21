@@ -41,8 +41,8 @@ PREDEFINED_PATTERNS: List[PatternDefinition] = [
         area_ratio=(0.75, 0.75, 1.0, 1.0),
         offset=(-30, 0, 30, 0),
         patterns=[
-            re.compile(r'(\d+小时)?(\d+分)?(\d+秒.*后解锁购买)'),
-            re.compile(r'(\d+小时)?(\d+分)?(\d+秒)')
+            re.compile(r'(\d{1,2}小时)?(\d{1,2}分)?(\d{1,2}秒.*后解锁购买)'),
+            re.compile(r'(\d{1,2}小时)?(\d{1,2}分)?(\d{1,2}秒)')
         ],
     ),
     PatternDefinition(

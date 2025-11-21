@@ -256,7 +256,8 @@ class ScriptThread(QThread):
         """检查确认按钮区域的颜色是否变化"""
         frame = self.win_cap.capture()
         while frame is None or frame.size == 0: frame = self.win_cap.capture()
-        region = self.selector.get_region("verify_check")
+        # region = self.selector.get_region("verify_check")
+        region = self.cached_verify_region
         # 获取区域中心颜色
         color_tmp = frame[((region[1] + region[3]) // 2), ((region[0] + region[2]) // 2)]
         center_color = convert_color(
@@ -434,12 +435,13 @@ def main():
     app = QApplication(sys.argv)
     selector = RegionSelector()
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_region_file = os.path.join(script_dir, "regions_config.json")
+    default_region_file = os.path.join(script_dir, "regions_2k.json")
     win_cap = WindowCapture(max_buffer_len=2)
     outputs_dir = os.path.join(script_dir, "outputs")
+    models_dir = os.path.join(script_dir, "models")
     
-    # 初始化 OCR
-    ocr = easyocr.Reader(["ch_sim", "en"], gpu=True)
+    # 初始化 OCR，使用本地 models 目录下的模型文件
+    ocr = easyocr.Reader(["ch_sim", "en"], gpu=True, model_storage_directory=models_dir)
     window = MonitorWindow(default_region_file=default_region_file)
     window.show()
     # 移动到屏幕右下角
@@ -453,17 +455,17 @@ def main():
     script_thread = None
     detected_regions_cache: Dict[str, Dict[str, object]] = {}
 
-    def load_region_file(filepath: str):
-        """加载区域配置文件"""
-        try:
-            selector.load_regions_from_file(filepath)
-            window.set_region_file(filepath)
-            window.add_log(f"区域配置已加载: {os.path.basename(filepath)}")
-        except Exception as exc:
-            window.add_log(f"⚠️ 区域配置加载失败: {exc}")
+    # def load_region_file(filepath: str):
+    #     """加载区域配置文件"""
+    #     try:
+    #         selector.load_regions_from_file(filepath)
+    #         window.set_region_file(filepath)
+    #         window.add_log(f"区域配置已加载: {os.path.basename(filepath)}")
+    #     except Exception as exc:
+    #         window.add_log(f"⚠️ 区域配置加载失败: {exc}")
     
-    load_region_file(default_region_file)
-    window.controller.region_file_changed.connect(load_region_file)
+    # load_region_file(default_region_file)
+    # window.controller.region_file_changed.connect(load_region_file)
     
     def on_start():
         nonlocal script_thread, detected_regions_cache

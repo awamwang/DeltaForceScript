@@ -45,7 +45,7 @@ class MonitorWindow(QMainWindow):
         self.buy_interval = 0.05  # 购买按钮点击间隔（秒）
         self.verify_interval = 0.05  # 确认按钮点击间隔（秒）
         self.ocr_interval = 0.95  # OCR识别间隔（time >= 5）（秒）
-        self.continue_after_complete = True  # 任务完成后继续运行
+        self.continue_after_complete = False  # 任务完成后继续运行
         self.click_refresh_at_3s = True  # 3秒时点击刷新按钮
         self.debug_mode = False  # 调试模式开关
         
@@ -151,34 +151,34 @@ class MonitorWindow(QMainWindow):
         config_layout = QVBoxLayout()
         config_group.setLayout(config_layout)
         
-        # 区域配置文件选择
-        file_layout = QHBoxLayout()
-        file_label = QLabel("区域配置文件:")
-        file_label.setFont(QFont("微软雅黑", 10))
-        file_label.setFixedWidth(120)
-        self.region_file_display = QLabel()
-        self.region_file_display.setFont(QFont("微软雅黑", 9))
-        self.region_file_display.setStyleSheet("color: #3F51B5;")
-        self._update_region_file_display()
-        select_file_btn = QPushButton("选择文件")
-        select_file_btn.setFont(QFont("微软雅黑", 10))
-        select_file_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #607D8B;
-                color: white;
-                border: none;
-                padding: 6px 10px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #546E7A;
-            }
-        """)
-        select_file_btn.clicked.connect(self.on_select_region_file)
-        file_layout.addWidget(file_label)
-        file_layout.addWidget(self.region_file_display, stretch=1)
-        file_layout.addWidget(select_file_btn)
-        config_layout.addLayout(file_layout)
+        # # 区域配置文件选择
+        # file_layout = QHBoxLayout()
+        # file_label = QLabel("区域配置文件:")
+        # file_label.setFont(QFont("微软雅黑", 10))
+        # file_label.setFixedWidth(120)
+        # self.region_file_display = QLabel()
+        # self.region_file_display.setFont(QFont("微软雅黑", 9))
+        # self.region_file_display.setStyleSheet("color: #3F51B5;")
+        # self._update_region_file_display()
+        # select_file_btn = QPushButton("选择文件")
+        # select_file_btn.setFont(QFont("微软雅黑", 10))
+        # select_file_btn.setStyleSheet("""
+        #     QPushButton {
+        #         background-color: #607D8B;
+        #         color: white;
+        #         border: none;
+        #         padding: 6px 10px;
+        #         border-radius: 4px;
+        #     }
+        #     QPushButton:hover {
+        #         background-color: #546E7A;
+        #     }
+        # """)
+        # select_file_btn.clicked.connect(self.on_select_region_file)
+        # file_layout.addWidget(file_label)
+        # file_layout.addWidget(self.region_file_display, stretch=1)
+        # file_layout.addWidget(select_file_btn)
+        # config_layout.addLayout(file_layout)
         
         # 购买点击延迟设置
         delay_layout = QHBoxLayout()
@@ -285,9 +285,9 @@ class MonitorWindow(QMainWindow):
                 height: 18px;
             }
         """)
-        continue_layout.addWidget(self.continue_checkbox)
-        continue_layout.addStretch()
-        config_layout.addLayout(continue_layout)
+        # continue_layout.addWidget(self.continue_checkbox)
+        # continue_layout.addStretch()
+        # config_layout.addLayout(continue_layout)
         
         # 3秒时点击刷新选项
         refresh_layout = QHBoxLayout()

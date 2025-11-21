@@ -18,6 +18,7 @@ PYINSTALLER_WORK = BUILD_DIR / "pyinstaller"
 
 DEFAULT_DATA_TARGETS = [
     (PROJECT_ROOT / "models", "models"),
+    (PROJECT_ROOT / "assets", "assets"),
     (PROJECT_ROOT / "regions_2k.json", "regions_2k.json"),
     (PROJECT_ROOT / "regions_config.json", "regions_config.json"),
 ]
